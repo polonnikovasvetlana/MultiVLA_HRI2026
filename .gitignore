@@ -1,0 +1,45 @@
+# macOS / editors
+.DS_Store
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Model weights and generated artifacts
+*.pt
+*.pth
+*.safetensors
+outputs/
+checkpoints/
+
+# ROS 2 build artifacts
+server/robot_ws/build/
+server/robot_ws/install/
+server/robot_ws/log/
+
+# Local transcripts and merge leftovers
+local/transcript-*.txt
+*.orig
+
+# Local third-party checkout
+/whisper.cpp/
+
+# Local agent instructions
+AGENTS.md
