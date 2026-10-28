@@ -1,0 +1,14 @@
+[Unit]
+Description=SO101E web dataset recorder
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/MultiVLA_HRI2026
+ExecStart=%h/venvs/lerobot/bin/python -u %h/MultiVLA_HRI2026/smolvla/web_record.py --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

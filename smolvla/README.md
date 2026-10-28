@@ -1,62 +1,92 @@
-# Raw SO101E pilot collection
+# SO101E web recorder
 
-Working branch: `feature/smolvla`.
+Branch: `feature/smolvla`. The browser controls unlimited, manually ended episodes.
+No object or task inputs are required. Only the approach side is selected.
 
-This launcher is standalone: it uses the installed SO101E plugins and calibration
-files without importing source files from `feature/robot`. Robot port and ID
-defaults are declared at the top of `record_raw.py`.
-
-Run on Jetson from an interactive terminal:
+On Jetson:
 
 ```bash
 source ~/venvs/lerobot/bin/activate
 cd ~/MultiVLA_HRI2026
-python smolvla/record_raw.py \
-  --target-object cube \
-  --approach-side top \
-  --task "Pick up the cube and place it in the tray."
+python smolvla/web_record.py
 ```
 
-Replace the object and task with the actual demonstration. Approach side is
-top, left, or right; keep the camera fixed and interpret left/right relative
-to that camera. The operator must demonstrate the selected approach.
+Open **http://192.168.50.239:8080** from a computer on the same network.
 
-Defaults: 3 episodes, 30 seconds each, 15 seconds reset, dataset/control 20 Hz,
-camera MJPG 1280x720 at 30 FPS, CPU H.264 ultrafast CRF 23, two encoder threads.
-The follower follows the leader immediately when the recorder connects.
-Only this recorder should own the serial ports and camera; stop any separate
-teleop or camera sender first.
+To run in the background with the included user service:
 
-Controls in the focused interactive terminal:
-- n / right arrow: finish the episode or reset interval early.
-- r / left arrow: discard and redo an episode.
-- q / Escape: finish the session.
+```bash
+mkdir -p ~/.config/systemd/user
+cp smolvla/smolvla-recorder.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user start smolvla-recorder
+```
 
-Each launch creates a new dataset under ~/datasets. The adjacent .session.json
-stores target object, approach side, task, joint order, calibration snapshots
-and hashes, software versions, and recorder arguments. Keep this file with the
-dataset when copying it. The side/object apply to the entire session.
+Use `systemctl --user stop smolvla-recorder` to stop and disconnect,
+`systemctl --user restart smolvla-recorder` to restart, and
+`journalctl --user -u smolvla-recorder -n 50` to inspect logs. Start the service
+or the foreground command, not both. The service is not enabled for automatic
+startup by these commands.
 
-Use --dry-run to validate configuration and print the command without opening
-hardware. Other options: --num-episodes, --episode-time-s, --reset-time-s, --fps,
---root. Existing datasets are never overwritten; resuming is not implemented.
+1. Check the live camera and select **Сверху / Слева / Справа**.
+2. Click **Включить управление**. The follower immediately follows the leader.
+3. Click **Начать эпизод** and demonstrate the movement with the leader.
+4. Click **Завершить и сохранить** when finished. There is no duration or episode-count limit.
+5. Select another side or start another episode. Click **Отключить управление** when done.
 
-The video is raw RGB. SAM3 and its HTTP server are not required during collection.
-Later processing must segment the actual saved frames and use the stored side.
-LeRobot supplies standard frame/episode indices and dataset timestamps; this
-launcher does not log sensor capture timestamps, online SAM3 IDs, or success
-labels per episode. Those additions are needed for experiments on live latency
-and for automated quality review. Review the pilot before bulk collection.
+Opening the page starts camera preview only. Serial ports are opened only after
+clicking the control button. Stop any separate camera sender/teleop before using
+this recorder. Disconnecting control also finishes the current episode and
+disables motor torque. Closing the browser tab does not stop the server or robot;
+use the disconnect button. Stop the server with Ctrl+C to flush pending writes
+and disconnect the hardware.
 
-Installation and tests completed on 2026-10-28:
-- LeRobot v0.6.1 core_scripts and feetech extras in ~/venvs/lerobot.
-- PyAV 15.1.0 H.264 encoding and TorchCodec 0.11.1 decoding work.
-- Added system libavdevice60, libavfilter9, libpostproc57; no driver update.
-- Two synthetic episodes (60 frames) round-trip through PyAV and TorchCodec.
-- Real camera + read-only state collection: 100 frames at 19.94 Hz, 0 cycles over
-  50 ms. Diagnostic recordings sent no robot commands and are not training data.
-- Launcher dry run and LeRobot config parsing pass. Live operator-driven
-  demonstration collection remains to be performed.
+## Data
 
-Environment snapshot, install logs and diagnostic datasets:
-~/so101_backups/record_setup_20261028_142837/
+Default root: **`~/datasets/grasp_capture/`**. Each start/stop creates a new,
+single-episode LeRobot dataset, for example:
+
+```text
+grasp_capture/
+  so101e_20261028_160000_123456_left/
+    data/                    # 7D measured state + effective sent action
+    videos/                  # raw RGB H.264, 1280x720
+    meta/                    # LeRobot metadata
+    capture_timing.jsonl     # camera sequence + receive/read/send timestamps per frame
+  so101e_20261028_160000_123456_left.capture.json
+```
+
+The adjacent capture JSON stores `approach_side`, duration, frame count,
+calibration snapshots, and labeling status `unlabeled`. Copy it together with the
+dataset directory. Left/right refer to the fixed camera image. The side cannot
+change during a starting, active, or saving episode. RGB is not tinted; the
+recorded side is available for later SAM3 prompting. No object label is assigned.
+LeRobot requires a task field in its format; it is an empty string placeholder,
+not a task annotation. Actual object/task annotation is deferred.
+
+Camera receive timestamps are measured after OpenCV returns a frame, not hardware
+exposure timestamps. Timing JSONL preserves actual cadence and repeated camera
+sequence numbers for later inspection/resampling. Default control/data rate is
+20 Hz; camera capture is 30 Hz. The writer runs off the control thread. A full
+writer queue stops recording with a visible error rather than silently dropping
+samples. Camera loss also stops the episode. Saved/error episodes appear in the
+browser history, including after restarting the server. A failed episode needs
+inspection before training.
+
+The app uses Python's HTTP server, OpenCV and the installed LeRobot/PyAV stack;
+no frontend build, cloud hosting or new web framework dependency is required.
+It listens on the local network. POST requests from a different browser origin
+are rejected. This is a local lab tool, not an internet-facing service.
+
+Options: `--host`, `--port`, `--root`. `record_raw.py` is an alias for the web entry
+point; the previous task/object CLI has been replaced.
+
+## Verification without moving motors
+
+```bash
+python smolvla/web_record.py --demo --port 8081 --root /tmp/smolvla-demo-data
+python -m unittest discover -s smolvla/tests -v
+```
+
+Demo mode uses synthetic frames and joint vectors and never opens motor drivers.
+Demo captures are marked `demo: true` and must not be used as demonstrations.
