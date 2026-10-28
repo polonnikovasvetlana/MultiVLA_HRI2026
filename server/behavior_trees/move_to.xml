@@ -1,0 +1,12 @@
+<root BTCPP_format="4" main_tree_to_execute="MoveTo">
+  <BehaviorTree ID="MoveTo">
+    <Sequence name="move_to">
+      <CheckEmergencyStop/>
+      <CheckRobotReady/>
+      <BuildPose frame_id="{frame_id}" x="{x}" y="{y}" z="{z}" pose="{coordinates}"/>
+      <ValidatePose pose="{coordinates}"/>
+      <MoveItPlan target="{coordinates}" trajectory="{trajectory}"/>
+      <MoveItExecute trajectory="{trajectory}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

@@ -1,0 +1,11 @@
+<root BTCPP_format="4" main_tree_to_execute="Home">
+  <BehaviorTree ID="Home">
+    <Sequence name="home">
+      <CheckEmergencyStop/>
+      <CheckRobotReady/>
+      <ResolveNamedPose name="home" pose="{target_pose}"/>
+      <MoveItPlan target="{target_pose}" trajectory="{trajectory}"/>
+      <MoveItExecute trajectory="{trajectory}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

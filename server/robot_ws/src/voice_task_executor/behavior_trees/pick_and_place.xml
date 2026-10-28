@@ -1,0 +1,28 @@
+<root BTCPP_format="4" main_tree_to_execute="PickAndPlace">
+  <BehaviorTree ID="PickAndPlace">
+    <Sequence name="pick_and_place">
+      <CheckEmergencyStop/>
+      <CheckRobotReady/>
+      <Fallback>
+        <GetTrackedObjectPose object="{object}" pose="{object_pose}"/>
+        <DetectObject object="{object}" pose="{object_pose}"/>
+      </Fallback>
+      <ValidatePose pose="{object_pose}"/>
+      <ComputePreGraspPose object_pose="{object_pose}" pregrasp_pose="{pregrasp_pose}"/>
+      <MoveItPlan target="{pregrasp_pose}" trajectory="{pick_trajectory}"/>
+      <MoveItExecute trajectory="{pick_trajectory}"/>
+      <ApproachObject object_pose="{object_pose}"/>
+      <CloseGripper/>
+      <RetryUntilSuccessful num_attempts="2">
+        <VerifyGrasp object="{object}"/>
+      </RetryUntilSuccessful>
+      <ResolveDestination destination="{destination}" pose="{place_pose}"/>
+      <ValidatePose pose="{place_pose}"/>
+      <MoveItPlan target="{place_pose}" trajectory="{place_trajectory}"/>
+      <MoveItExecute trajectory="{place_trajectory}"/>
+      <OpenGripper/>
+      <Retreat/>
+      <VerifyPlacement object="{object}" destination="{destination}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

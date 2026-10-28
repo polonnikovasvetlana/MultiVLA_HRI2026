@@ -1,0 +1,15 @@
+<root BTCPP_format="4" main_tree_to_execute="Place">
+  <BehaviorTree ID="Place">
+    <Sequence name="place">
+      <CheckEmergencyStop/>
+      <CheckRobotReady/>
+      <ResolveDestination destination="{destination}" pose="{place_pose}"/>
+      <ValidatePose pose="{place_pose}"/>
+      <MoveItPlan target="{place_pose}" trajectory="{trajectory}"/>
+      <MoveItExecute trajectory="{trajectory}"/>
+      <OpenGripper/>
+      <Retreat/>
+      <VerifyPlacement destination="{destination}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

@@ -1,0 +1,16 @@
+string request_id
+string behavior
+string object
+string destination
+string frame_id
+bool has_coordinates
+float64 x
+float64 y
+float64 z
+---
+bool success
+string error_code
+string message
+---
+string stage
+float32 progress
