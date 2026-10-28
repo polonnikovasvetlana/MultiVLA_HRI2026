@@ -14,10 +14,6 @@ LLM не управляет суставами напрямую.
 - `whisper.cpp/` — сторонний проект; его использование основным
   Python-контуром не подтверждено.
 
-Прежние папки `AgenticBotIW/` и `STT/` переименованы в `server/` и `client/`.
-Основной сервер теперь называется `server/stt_server.py` (раньше `sst_server.py`).
-Устаревший `voice_client.py` из серверной части удалён по указанию владельца.
-
 ## Взаимодействие
 
 `client/voice_client.py` → WAV по HTTP → `server/stt_server.py`

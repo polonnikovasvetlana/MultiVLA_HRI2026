@@ -21,13 +21,13 @@ venv/
 outputs/
 checkpoints/
 
-server/robot_ws/build/
-server/robot_ws/install/
-server/robot_ws/log/
+**/robot_ws/build/
+**/robot_ws/install/
+**/robot_ws/log/
 
-local/transcript-*.txt
+*.transcript-*.txt
 
 *.orig
 
-/whisper.cpp/
+*whisper.cpp/
 AGENTS.md
