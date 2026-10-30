@@ -14,6 +14,7 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from web_record import Controller, Server
 from capture import Episode
+from home import HomeMotion, HomeStore
 
 
 class CameraStub:
@@ -37,13 +38,28 @@ class RobotStub:
     def __init__(self):
         self.connected = False
         self.closed = False
+        self.positions = list(range(7))
+        self.leader_positions = list(range(7))
+        self.commands = []
 
     def connect(self):
         self.connected = True
 
     def sample(self):
         tick = time.monotonic_ns()
-        return list(range(7)), list(range(7)), tick, tick
+        state = self.read_state()
+        return state, self.send_target(self.read_leader()), tick, tick
+
+    def read_state(self):
+        return self.positions[:]
+
+    def read_leader(self):
+        return self.leader_positions[:]
+
+    def send_target(self, positions):
+        self.positions = list(positions)
+        self.commands.append(self.positions[:])
+        return self.positions[:]
 
     def close(self):
         self.closed = True
@@ -99,7 +115,7 @@ class RecorderTests(unittest.TestCase):
 
     def connect(self):
         self.controller.connect()
-        wait_for(lambda: self.controller.mode == "connected")
+        wait_for(lambda: self.controller.mode == "connected" and self.controller.positions is not None)
 
     def test_opening_page_does_not_construct_or_connect_robot(self):
         server = Server(("127.0.0.1", 0), self.controller)
@@ -168,6 +184,90 @@ class RecorderTests(unittest.TestCase):
         self.assertTrue(episode.stop.is_set())
         self.assertIn("не успевает", episode.error)
         self.assertEqual(episode.queue.get_nowait()["marker"], 1)
+
+    def test_home_requires_taught_pose_and_is_forbidden_during_recording(self):
+        self.assertFalse(self.controller.status()["home"]["saved"])
+        self.connect()
+        with self.assertRaises(ValueError):
+            self.controller.go_home()
+        self.controller.save_home()
+        self.controller.record("top")
+        with self.assertRaises(ValueError):
+            self.controller.go_home()
+        with self.assertRaises(ValueError):
+            self.controller.save_home()
+        self.assertEqual(self.controller.mode, "connected")
+
+    def test_home_stays_paused_and_cannot_jump_back_to_unaligned_leader(self):
+        self.connect()
+        self.controller.save_home()
+        home = self.controller.positions[:]
+        self.robot.leader_positions = [v+10 for v in home]
+        wait_for(lambda: self.controller.positions == self.robot.leader_positions)
+        with patch.object(HomeMotion, "MIN_DURATION", .15), patch.object(HomeMotion, "MAX_SPEED", 1e6):
+            self.controller.go_home()
+            with self.assertRaises(ValueError):
+                self.controller.record("left")
+            wait_for(lambda: self.controller.mode == "paused")
+        self.assertEqual(self.robot.positions, home)
+        command_count = len(self.robot.commands)
+        time.sleep(.12)
+        self.assertEqual(len(self.robot.commands), command_count)
+        with self.assertRaises(ValueError):
+            self.controller.resume()
+        self.robot.leader_positions = home[:]
+        wait_for(lambda: self.controller.status()["home"]["can_resume"])
+        self.controller.resume()
+        wait_for(lambda: self.controller.mode == "connected")
+        self.assertEqual(self.robot.positions, home)
+
+    def test_cancel_home_holds_current_pose_and_does_not_resume_tracking(self):
+        self.connect()
+        self.controller.save_home()
+        self.robot.leader_positions = [value+20 for value in self.robot.positions]
+        wait_for(lambda: self.controller.positions == self.robot.leader_positions)
+        self.controller.go_home()
+        wait_for(lambda: self.controller.home_motion is not None)
+        self.controller.cancel_home()
+        wait_for(lambda: self.controller.mode == "paused")
+        held = self.robot.positions[:]
+        self.robot.leader_positions = [v+20 for v in held]
+        count = len(self.robot.commands)
+        time.sleep(.12)
+        self.assertEqual(self.robot.positions, held)
+        self.assertEqual(len(self.robot.commands), count)
+
+    def test_taught_home_survives_restart_and_rejects_changed_calibration(self):
+        self.connect()
+        self.controller.save_home()
+        restored = HomeStore(self.controller.home.path)
+        self.assertEqual(restored.target({}), self.controller.positions)
+        with self.assertRaisesRegex(ValueError, "калибровки"):
+            restored.target({"changed":True})
+
+
+class TrajectoryTests(unittest.TestCase):
+    def test_trajectory_stays_in_bounds_and_obeys_speed_limit(self):
+        start = [-100, 90, -60, 40, -80, 0, 70]
+        end = [100, -90, 70, -50, 90, 100, -70]
+        motion = HomeMotion(start, end, 0)
+        self.assertEqual(motion.command(0), start)
+        self.assertEqual(motion.command(motion.duration), end)
+        last = motion.command(0)
+        t = .05
+        while t <= motion.duration:
+            current = motion.command(t)
+            for a, b, lo, hi in zip(last,current,start,end):
+                self.assertLessEqual(abs(b-a)/.05, HomeMotion.MAX_SPEED+.001)
+                self.assertTrue(min(lo,hi)-.001 <= b <= max(lo,hi)+.001)
+            last = current
+            t += .05
+
+    def test_invalid_pose_never_becomes_a_trajectory(self):
+        valid = [0,0,0,0,0,50,0]
+        for invalid in ([0]*6, [float("nan")]*7, [101]*7):
+            with self.assertRaises(ValueError):
+                HomeMotion(valid, invalid, 0)
 
 
 if __name__ == "__main__":

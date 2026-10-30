@@ -34,6 +34,32 @@ startup by these commands.
 4. Click **Завершить и сохранить** when finished. There is no duration or episode-count limit.
 5. Select another side or start another episode. Click **Отключить управление** when done.
 
+## Taught home pose
+
+Home is optional; it provides a repeatable starting pose between demonstrations.
+No zero/default motor pose is assumed.
+
+1. Enable control and use the leader to put the follower in the desired starting
+   pose, normally with the gripper open. Hold still and click **Запомнить home**.
+2. After finishing/saving an episode, click **В home**. The follower returns with
+   a smooth joint-space trajectory while leader tracking is paused.
+3. The follower holds its position with torque enabled. Move the leader to match
+   the follower's pose; **Продолжить управление** becomes available when aligned.
+4. Click it to resume following, then start the next recording.
+
+**Остановить выезд** interrupts the return, holds the measured pose and leaves
+tracking paused. The main disconnect button remains available during the return.
+Teaching, homing and recording are mutually exclusive. Home motion is never
+included in a demonstration. A saved home can be updated between episodes.
+
+The pose is stored outside Git in `~/.config/multivla/so101e_home.json`. It includes
+all seven motors and a calibration fingerprint; changing calibration requires
+teaching home again. Demo mode stores its own pose under the demo data root.
+`--home-file` overrides the path. The trajectory uses smoothstep interpolation
+with a minimum duration of 2 s and maximum commanded speed of 15 normalized
+units/s. It does not perform collision planning: keep the path clear. Resume
+requires live leader/follower agreement within 2 body units and 5 gripper units.
+
 Opening the page starts camera preview only. Serial ports are opened only after
 clicking the control button. Stop any separate camera sender/teleop before using
 this recorder. Disconnecting control also finishes the current episode and

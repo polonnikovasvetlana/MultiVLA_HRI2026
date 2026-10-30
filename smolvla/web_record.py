@@ -14,10 +14,11 @@ from urllib.parse import urlsplit
 
 from capture import Camera, Episode, SIDES
 from hardware import Robot, DemoRobot
+from home import HomeStore, HomeMotion, leader_aligned, checked_positions
 
 
 class Controller:
-    def __init__(self, root, camera, robot_factory=Robot, fps=20, demo=False):
+    def __init__(self, root, camera, robot_factory=Robot, fps=20, demo=False, home_file=None):
         self.root, self.camera = Path(root), camera
         self.root.mkdir(parents=True, exist_ok=True)
         self.robot_factory, self.fps, self.demo = robot_factory, fps, demo
@@ -27,6 +28,55 @@ class Controller:
         self.stop = threading.Event()
         self.thread = None
         self.ticks = deque(maxlen=60)
+        self.home = HomeStore(home_file or self.root / "home_pose.json")
+        self.positions = self.leader_positions = None
+        self.positions_ns = 0
+        self.home_motion = self.home_target = None
+        self.home_progress = 0
+        self.home_cancel = self.resume_requested = False
+        self.home_error = None
+
+    def _between_episodes(self):
+        if self.episode and not self.episode.done.is_set():
+            raise ValueError("Сначала завершите и сохраните текущий эпизод")
+
+    def save_home(self):
+        with self.lock:
+            self._between_episodes()
+            if self.mode not in ("connected", "paused"):
+                raise ValueError("Сначала включите управление и поставьте руку в стартовую позу")
+            if time.monotonic_ns() - self.positions_ns > 300_000_000:
+                raise ValueError("Нет свежего положения руки")
+            self.home.save(self.positions, self.robot.calibrations)
+            self.home_error = None
+
+    def go_home(self):
+        with self.lock:
+            self._between_episodes()
+            if self.mode not in ("connected", "paused"):
+                raise ValueError("Сначала включите управление")
+            target = self.home.target(self.robot.calibrations)
+            if time.monotonic_ns() - self.positions_ns > 300_000_000:
+                raise ValueError("Нет свежего положения руки")
+            checked_positions(self.positions)
+            self.home_target, self.home_motion, self.home_progress = target, None, 0
+            self.home_cancel = self.resume_requested = False
+            self.home_error = None
+            self.mode = "homing"
+
+    def cancel_home(self):
+        with self.lock:
+            if self.mode != "homing":
+                raise ValueError("Рука сейчас не едет в home")
+            self.home_cancel = True
+
+    def resume(self):
+        with self.lock:
+            if self.mode != "paused":
+                raise ValueError("Управление сейчас не на паузе")
+            if not leader_aligned(self.positions, self.leader_positions):
+                raise ValueError("Сначала совместите позу leader с текущей позой follower")
+            self.resume_requested = True
 
     def select_side(self, side):
         if side not in SIDES:
@@ -41,6 +91,11 @@ class Controller:
             if self.mode not in ("idle", "error") or (self.thread and self.thread.is_alive()):
                 raise ValueError("Управление уже включено или подключается")
             self.mode, self.error = "connecting", None
+            self.positions = self.leader_positions = None
+            self.positions_ns = 0
+            self.home_motion = None
+            self.home_cancel = self.resume_requested = False
+            self.home_error = None
             self.stop = threading.Event()
             self.ticks.clear()
             self.thread = threading.Thread(target=self._control, name="robot-control", daemon=True)
@@ -51,7 +106,7 @@ class Controller:
             self.stop.set()
             if self.episode and not self.episode.done.is_set():
                 self.episode.finish()
-            if self.mode in ("connected", "connecting"):
+            if self.mode in ("connected", "connecting", "homing", "paused"):
                 self.mode = "stopping"
 
     def record(self, side):
@@ -81,11 +136,47 @@ class Controller:
             while not self.stop.is_set():
                 tick_ns = time.monotonic_ns()
                 frame = self.camera.snapshot()
-                state, action, state_ns, action_ns = robot.sample()
+                with self.lock:
+                    mode = self.mode
+                if mode == "connected":
+                    state, action, state_ns, action_ns = robot.sample()
+                    leader = action
+                else:
+                    state_ns = time.monotonic_ns()
+                    state, leader = robot.read_state(), robot.read_leader()
+                    action, action_ns = None, time.monotonic_ns()
+                    with self.lock:
+                        if mode == "homing" and self.mode == "homing":
+                            if self.home_cancel:
+                                robot.send_target(state)
+                                self.mode = "paused"
+                                self.home_cancel = False
+                            else:
+                                now = time.monotonic()
+                                if self.home_motion is None:
+                                    self.home_motion = HomeMotion(state, self.home_target, now)
+                                robot.send_target(self.home_motion.command(now))
+                                self.home_progress = self.home_motion.progress(now)
+                                if self.home_progress == 1 and self.home_motion.reached(state):
+                                    self.mode = "paused"
+                                elif now > self.home_motion.started_at + self.home_motion.duration + 5:
+                                    robot.send_target(state)
+                                    self.mode = "paused"
+                                    self.home_error = "Рука не достигла home. Выезд остановлен"
+                        elif mode == "paused" and self.resume_requested:
+                            # Recheck live values on the serial thread, not only the HTTP snapshot.
+                            if leader_aligned(state, leader):
+                                self.mode = "connected"
+                                self.home_error = None
+                            else:
+                                self.home_error = "Совместите leader с follower, затем продолжите управление"
+                            self.resume_requested = False
                 with self.lock:
                     self.ticks.append(time.monotonic())
+                    self.positions, self.leader_positions = list(state), list(leader)
+                    self.positions_ns = time.monotonic_ns()
                     episode = self.episode
-                if episode and episode.ready.is_set() and not episode.stop.is_set():
+                if mode == "connected" and episode and episode.ready.is_set() and not episode.stop.is_set():
                     if frame is None or (tick_ns-frame["received_ns"]) > 500_000_000:
                         episode.finish("Камера перестала присылать свежие кадры")
                     else:
@@ -126,12 +217,24 @@ class Controller:
     def status(self):
         with self.lock:
             fps = (len(self.ticks)-1)/(self.ticks[-1]-self.ticks[0]) if len(self.ticks)>1 else 0
+            home_error = self.home_error or self.home.error
+            home_valid = bool(self.home.pose)
+            if home_valid and self.mode in ("connected", "paused", "homing"):
+                try:
+                    self.home.target(self.robot.calibrations)
+                except ValueError as exc:
+                    home_valid, home_error = False, str(exc)
             return {"control": self.mode, "error": self.error, "side": self.side,
                     "control_fps": round(fps, 1) if self.mode=="connected" else 0,
                     "target_fps": self.fps, "camera": self.camera.status(),
                     "episode": self.episode.status() if self.episode else None,
                     "root": str(self.root), "free_gb": round(shutil.disk_usage(self.root).free/1e9,1),
-                    "demo": self.demo}
+                    "demo": self.demo,
+                    "home": {"saved": bool(self.home.pose), "valid": home_valid,
+                             "error": home_error, "progress": self.home_progress,
+                             "can_resume": self.mode == "paused" and
+                             leader_aligned(self.positions, self.leader_positions),
+                             "saved_at_utc": self.home.pose.get("saved_at_utc") if self.home.pose else None}}
 
     def close(self):
         self.disconnect()
@@ -222,6 +325,14 @@ class Handler(BaseHTTPRequestHandler):
                 controller.connect()
             elif path == "/api/control/stop":
                 controller.disconnect()
+            elif path == "/api/control/resume":
+                controller.resume()
+            elif path == "/api/home/save":
+                controller.save_home()
+            elif path == "/api/home/go":
+                controller.go_home()
+            elif path == "/api/home/cancel":
+                controller.cancel_home()
             elif path == "/api/side":
                 controller.select_side(data.get("side"))
             elif path == "/api/record/start":
@@ -244,11 +355,15 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--root", type=Path)
+    parser.add_argument("--home-file", type=Path, help="Saved, taught home pose")
     parser.add_argument("--demo", action="store_true", help="Synthetic camera and robot; never opens motors")
     args = parser.parse_args()
     root = args.root or Path.home()/"datasets"/("web_demo" if args.demo else "grasp_capture")
     camera = Camera(demo=args.demo)
-    controller = Controller(root, camera, DemoRobot if args.demo else Robot, demo=args.demo)
+    home_file = args.home_file or (root/"home_pose.json" if args.demo else
+                                  Path.home()/".config/multivla/so101e_home.json")
+    controller = Controller(root, camera, DemoRobot if args.demo else Robot, demo=args.demo,
+                            home_file=home_file)
     server = Server((args.host,args.port), controller)
     camera.start()
     def shutdown(*_):

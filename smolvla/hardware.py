@@ -1,7 +1,6 @@
 """SO101E configuration and the hardware boundary used by the recorder."""
 from pathlib import Path
 import json
-import math
 import subprocess
 import time
 
@@ -55,12 +54,22 @@ class Robot:
 
     def sample(self):
         state_ns = time.monotonic_ns()
+        state = self.read_state()
+        sent = self.send_target(self.read_leader())
+        return state, sent, state_ns, time.monotonic_ns()
+
+    def read_state(self):
         state = self.follower.get_observation()
+        return [state[name + ".pos"] for name in JOINT_IDS]
+
+    def read_leader(self):
         action = self.leader.get_action()
+        return [action[name + ".pos"] for name in JOINT_IDS]
+
+    def send_target(self, positions):
+        action = {name + ".pos": value for name, value in zip(JOINT_IDS, positions)}
         sent = self.follower.send_action(action)
-        return ([state[name + ".pos"] for name in JOINT_IDS],
-                [sent[name + ".pos"] for name in JOINT_IDS],
-                state_ns, time.monotonic_ns())
+        return [sent[name + ".pos"] for name in JOINT_IDS]
 
     def close(self):
         errors = []
@@ -78,13 +87,27 @@ class DemoRobot:
     """Explicit test mode. Never imports or opens motor drivers."""
     calibrations = {}
 
+    def __init__(self):
+        self.positions = [0, 0, 0, 0, 0, 50, 0]
+        self.leader_positions = [15, -15, 10, -10, 5, 60, 8]
+
     def connect(self):
         pass
 
     def sample(self):
         tick = time.monotonic_ns()
-        state = [math.sin(tick / 1e9 + i) * 20 for i in range(7)]
-        return state, state[:], tick, time.monotonic_ns()
+        state = self.read_state()
+        return state, self.send_target(self.read_leader()), tick, time.monotonic_ns()
+
+    def read_state(self):
+        return self.positions[:]
+
+    def read_leader(self):
+        return self.leader_positions[:]
+
+    def send_target(self, positions):
+        self.positions = list(positions)
+        return self.positions[:]
 
     def close(self):
         pass
