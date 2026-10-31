@@ -1,0 +1,19 @@
+# MultiVLA: dataset preparation and SmolVLA training on Linux x86_64 / RTX 4090.
+# Use a separate Conda environment with Python 3.12 and FFmpeg 7.x.
+# Run installation commands from the MultiVla repository root.
+#
+# Install the CUDA 12.8 PyTorch wheels first (requires a compatible NVIDIA driver):
+# python -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+# Then install this file:
+# python -m pip install -r smolvla/requirements.txt
+#
+# LeRobot extras include datasets, pandas, pyarrow, numpy, transformers,
+# accelerate and the other dependencies required for training.
+# This is a starting version specification, not a fully resolved environment lock.
+# Hardware plugins for SO101E, ROS, voice and SAM3 are outside this training setup.
+
+lerobot[training,smolvla]==0.6.1
+torch==2.11.0
+torchvision==0.26.0
+torchcodec==0.11.1
+av==15.1.0
