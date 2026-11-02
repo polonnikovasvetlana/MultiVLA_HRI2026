@@ -106,7 +106,8 @@ class TrainingTests(unittest.TestCase):
         args = argparse.Namespace(repo_id="local/test", dataset=self.capture,
             output=self.root / "run", batch_size=8, steps=20, save_freq=10, num_workers=0)
         cmd = training.command(args, info())
-        self.assertIn("lerobot.scripts.lerobot_train", cmd)
+        self.assertTrue(any(value.endswith("train_with_mlflow.py") for value in cmd))
+        self.assertIn("--mlflow-dir", cmd)
         self.assertIn("--policy.path=lerobot/smolvla_base", cmd)
         self.assertIn("--policy.input_features={}", cmd)
         self.assertIn("--policy.output_features={}", cmd)

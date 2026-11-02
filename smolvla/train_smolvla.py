@@ -34,7 +34,10 @@ def command(args, info):
     # Discard the base checkpoint's camera and state schema. LeRobot derives
     # front RGB + 7D state/action from OUR dataset. Keep the padded 32D network
     # projections from the pretrained model; do not change max_*_dim to seven.
-    return [sys.executable, "-m", "lerobot.scripts.lerobot_train",
+    return [sys.executable, str(Path(__file__).with_name("train_with_mlflow.py")),
+        "--mlflow-dir", str(getattr(args, "mlflow_dir", Path("mlflow")).resolve()),
+        "--experiment", getattr(args, "experiment", "multivla-so101e"),
+        "--run-name", args.output.name, "--",
         "--policy.path=lerobot/smolvla_base", "--policy.input_features={}",
         "--policy.output_features={}", "--policy.push_to_hub=false",
         "--policy.device=cuda", "--policy.empty_cameras=0", "--policy.adapt_to_pi_aloha=false",
@@ -43,7 +46,10 @@ def command(args, info):
         "--dataset.video_backend=pyav", f"--output_dir={args.output.resolve()}",
         "--job_name=so101e_pick_place", f"--batch_size={args.batch_size}",
         f"--steps={args.steps}", f"--save_freq={args.save_freq}",
-        f"--num_workers={args.num_workers}", "--seed=1000"]
+        f"--num_workers={args.num_workers}", "--seed=1000",
+        f"--log_freq={getattr(args, 'log_freq', 10)}",
+        f"--dataset.eval_split={getattr(args, 'eval_split', 0.2)}",
+        f"--eval_steps={getattr(args, 'eval_steps', 500)}"]
 
 
 def main():
@@ -55,12 +61,22 @@ def main():
     parser.add_argument("--steps", type=int, default=20000)
     parser.add_argument("--save-freq", type=int, default=1000)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--mlflow-dir", type=Path, default=Path("mlflow"),
+                        help="Local SQLite and artifacts directory; relative to the working directory")
+    parser.add_argument("--experiment", default="multivla-so101e")
+    parser.add_argument("--log-freq", type=int, default=10)
+    parser.add_argument("--eval-split", type=float, default=0.2)
+    parser.add_argument("--eval-steps", type=int, default=500)
     parser.add_argument("--run", action="store_true", help="Actually launch training; otherwise print only")
     args = parser.parse_args()
     if min(args.batch_size, args.steps, args.save_freq) <= 0 or args.num_workers < 0:
         parser.error("Batch size/steps/save frequency must be positive; workers nonnegative")
     if args.output.exists():
         parser.error("Output already exists. Choose a new run directory")
+    if args.log_freq <= 0 or not 0 <= args.eval_split < 1 or args.eval_steps < 0:
+        parser.error("Invalid logging/evaluation settings")
+    if args.eval_steps > 0 and args.eval_split == 0:
+        parser.error("--eval-steps > 0 requires --eval-split > 0")
     sources = read_json(args.dataset / "training_sources.json")
     if sources.get("complete") is not True or sources.get("repo_id") != args.repo_id:
         parser.error("Dataset preparation incomplete, or repo-id differs")
